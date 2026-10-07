@@ -30,7 +30,17 @@ export class RuntimeHostAgentGraphComposition {
   #coordinator: AgentGraphCoordinator | undefined;
   #client: HostAgentGraphCoordinator | undefined;
   #supervisorWake: AgentGraphSupervisorWakeCoordinator | undefined;
-  #closeTask: Promise<void> | undefined;
+  // Keep each authority visible to the module's lifecycle error collector.
+  readonly drainHooks = [
+    () => this.#supervisorWake?.beginDrain(),
+    () => this.#coordinator?.beginDrain(),
+  ];
+  readonly closeHooks = [
+    () => this.#supervisorWake?.close(),
+    () => this.#client?.close(),
+    () => this.#coordinator?.close(),
+    () => this.controlStore.close(),
+  ];
 
   constructor(controlStore: ExecutionGraphStore) {
     this.controlStore = controlStore;
@@ -73,47 +83,5 @@ export class RuntimeHostAgentGraphComposition {
   async recover(): Promise<void> {
     await this.supervisorWake.recover();
     await this.coordinator.recover();
-  }
-
-  beginDrain(): void {
-    const errors: unknown[] = [];
-    for (const begin of [
-      () => this.#supervisorWake?.beginDrain(),
-      () => this.#coordinator?.beginDrain(),
-    ]) {
-      try {
-        begin();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) {
-      throw new AggregateError(errors, 'Unable to drain Agent Graph composition');
-    }
-  }
-
-  async close(): Promise<void> {
-    this.#closeTask ??= this.#closeOwnedResources();
-    await this.#closeTask;
-  }
-
-  async #closeOwnedResources(): Promise<void> {
-    const errors: unknown[] = [];
-    for (const close of [
-      () => this.#supervisorWake?.close(),
-      () => this.#client?.close(),
-      () => this.#coordinator?.close(),
-      () => this.controlStore.close(),
-    ]) {
-      try {
-        await close();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1)
-      throw new AggregateError(errors, 'Unable to close Agent Graph composition');
   }
 }

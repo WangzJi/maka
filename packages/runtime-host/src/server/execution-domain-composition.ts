@@ -2951,8 +2951,8 @@ export async function createExecutionRuntimeHostDomains(
         id: 'agent-graph',
         handlers: [graph.client.handlers],
         recovery: { domains: () => graph.recover() },
-        drain: [() => graph.beginDrain()],
-        close: [() => graph.close()],
+        drain: graph.drainHooks,
+        close: graph.closeHooks,
       }),
       createRuntimeHostDomainModule({
         id: 'goal',
@@ -3118,10 +3118,12 @@ export async function createExecutionRuntimeHostDomains(
     } catch (closeError) {
       errors.push(closeError);
     }
-    try {
-      await agentGraph?.close();
-    } catch (closeError) {
-      errors.push(closeError);
+    for (const closeGraphAuthority of agentGraph?.closeHooks ?? []) {
+      try {
+        await closeGraphAuthority();
+      } catch (closeError) {
+        errors.push(closeError);
+      }
     }
     try {
       historyComposition?.close();

@@ -38,8 +38,13 @@ test('agent graph composition uses the selected persistence provider and closes 
   assert.throws(() => composition.coordinator, /coordinator is not composed/);
   assert.throws(() => composition.client, /client is not composed/);
   assert.throws(() => composition.supervisorWake, /supervisor wake coordinator is not composed/);
-  composition.beginDrain();
-  await Promise.all([composition.close(), composition.close()]);
+  const module = createRuntimeHostDomainModule({
+    id: 'agent-graph',
+    drain: composition.drainHooks,
+    close: composition.closeHooks,
+  });
+  module.beginDrain();
+  await Promise.all([module.close(), module.close()]);
   assert.equal(closes, 1);
 });
 
@@ -74,9 +79,19 @@ test('agent graph composition preserves recovery and drain order and attempts ev
   } as unknown as AgentGraphCoordinator);
   assert.throws(() => composition.bindSupervisorWake(wake), /already bound/);
   await composition.recover();
-  composition.beginDrain();
-  await assert.rejects(composition.close(), failure);
-  await assert.rejects(composition.close(), failure);
+  const module = createRuntimeHostDomainModule({
+    id: 'agent-graph',
+    drain: composition.drainHooks,
+    close: composition.closeHooks,
+  });
+  module.beginDrain();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(module.close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors, [failure]);
+      return true;
+    });
+  }
   assert.deepEqual(events, [
     'recover:wake',
     'recover:coordinator',
@@ -111,8 +126,8 @@ test('a failed graph wake drain still drains the coordinator and is reported dur
   } as unknown as AgentGraphCoordinator);
   const module = createRuntimeHostDomainModule({
     id: 'agent-graph',
-    drain: [() => composition.beginDrain()],
-    close: [() => composition.close()],
+    drain: composition.drainHooks,
+    close: composition.closeHooks,
   });
   module.beginDrain();
   module.beginDrain();
@@ -122,4 +137,47 @@ test('a failed graph wake drain still drains the coordinator and is reported dur
     return true;
   });
   assert.deepEqual(events, ['drain:coordinator', 'close:wake', 'close:coordinator', 'close:store']);
+});
+
+test('graph module preserves individual drain and close failures without extra aggregation', async () => {
+  const failures = [
+    new Error('wake drain failed'),
+    new Error('coordinator drain failed'),
+    new AggregateError([new Error('wake task failed')], 'wake close failed'),
+    new Error('client close failed'),
+    new Error('coordinator close failed'),
+    new Error('store close failed'),
+  ];
+  const attempts: number[] = [];
+  const fail = (index: number) => {
+    attempts.push(index);
+    throw failures[index];
+  };
+  const composition = new RuntimeHostAgentGraphComposition({
+    close: () => fail(5),
+  } as unknown as ExecutionGraphStore);
+  composition.bindSupervisorWake({
+    beginDrain: () => fail(0),
+    close: async () => fail(2),
+  } as unknown as AgentGraphSupervisorWakeCoordinator);
+  composition.bindClient({ close: () => fail(3) } as unknown as HostAgentGraphCoordinator);
+  composition.bindCoordinator({
+    beginDrain: () => fail(1),
+    close: async () => fail(4),
+  } as unknown as AgentGraphCoordinator);
+  const module = createRuntimeHostDomainModule({
+    id: 'agent-graph',
+    drain: composition.drainHooks,
+    close: composition.closeHooks,
+  });
+  module.beginDrain();
+  module.beginDrain();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(module.close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors, failures);
+      return true;
+    });
+  }
+  assert.deepEqual(attempts, [0, 1, 2, 3, 4, 5]);
 });

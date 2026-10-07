@@ -126,8 +126,8 @@ export function createRuntimeHostToolComposition(input: {
   // a UI search and a model recall cannot diverge in what they can see.
   const recallDeps: RecallToolDeps = {
     listSessions: () => getSessionManager().listSessions(),
-    readMessages: (sessionId, abortSignal) =>
-      readRuntimeHostHistoryMessages(getSessionManager(), sessionId, abortSignal),
+    readMessages: async (sessionId, abortSignal) =>
+      readRuntimeHostHistoryMessages(getSessionManager, sessionId, abortSignal),
     listCandidateSessions: async ({ terms, sessionIds, abortSignal }) => {
       if (abortSignal?.aborted) return null;
       // A storage failure only costs speed here: declining the fast path
@@ -193,18 +193,19 @@ export function createRuntimeHostToolComposition(input: {
     webSearchService,
     webFetchService,
     recall,
-    childHostTools,
     hostTools,
     childAgentTools,
   });
 }
 
 export async function readRuntimeHostHistoryMessages(
-  manager: Pick<SessionManager, 'getMessages'>,
+  getSessionManager: () => Pick<SessionManager, 'getMessages'>,
   sessionId: string,
   abortSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<SessionManager['getMessages']>> | null> {
   if (abortSignal?.aborted) return null;
-  const messages = await manager.getMessages(sessionId).catch(() => null);
+  const messages = await getSessionManager()
+    .getMessages(sessionId)
+    .catch(() => null);
   return abortSignal?.aborted ? null : messages;
 }

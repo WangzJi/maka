@@ -27,16 +27,51 @@ test('history message reads fail closed when unavailable or aborted', async () =
   const manager = {
     getMessages: async () => messages,
   } as unknown as Pick<SessionManager, 'getMessages'>;
-  assert.equal(await readRuntimeHostHistoryMessages(manager, 'session'), messages);
+  assert.equal(await readRuntimeHostHistoryMessages(() => manager, 'session'), messages);
 
   const aborted = new AbortController();
   aborted.abort();
-  assert.equal(await readRuntimeHostHistoryMessages(manager, 'session', aborted.signal), null);
+  assert.equal(
+    await readRuntimeHostHistoryMessages(() => manager, 'session', aborted.signal),
+    null,
+  );
 
   const unavailable = {
     getMessages: async () => {
       throw new Error('unavailable');
     },
   } as unknown as Pick<SessionManager, 'getMessages'>;
-  assert.equal(await readRuntimeHostHistoryMessages(unavailable, 'session'), null);
+  assert.equal(await readRuntimeHostHistoryMessages(() => unavailable, 'session'), null);
+});
+
+test('history cancellation is checked before acquiring a manager and acquisition errors reject asynchronously', async () => {
+  const failure = new Error('SessionManager is not composed');
+  let acquisitions = 0;
+  const getManager = () => {
+    acquisitions += 1;
+    throw failure;
+  };
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await readRuntimeHostHistoryMessages(getManager, 'session', aborted.signal), null);
+  assert.equal(acquisitions, 0);
+  let read: ReturnType<typeof readRuntimeHostHistoryMessages> | undefined;
+  assert.doesNotThrow(() => {
+    read = readRuntimeHostHistoryMessages(getManager, 'session');
+  });
+  assert.ok(read instanceof Promise);
+  await assert.rejects(read, (error: unknown) => error === failure);
+  assert.equal(acquisitions, 1);
+});
+
+test('history cancellation during a pending read discards the completed messages', async () => {
+  const abort = new AbortController();
+  const messages = [{ role: 'user', content: 'hello' }];
+  const manager = {
+    getMessages: async () => {
+      abort.abort();
+      return messages;
+    },
+  } as unknown as Pick<SessionManager, 'getMessages'>;
+  assert.equal(await readRuntimeHostHistoryMessages(() => manager, 'session', abort.signal), null);
 });
