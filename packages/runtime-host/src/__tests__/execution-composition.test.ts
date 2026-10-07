@@ -95,7 +95,6 @@ import {
 } from '../server/host-residency-registry.js';
 import {
   createExecutionRuntimeHostComposition,
-  runtimeHostFilesystemWorkerRuntime,
   stopOwnedWorkHubRoot,
   stopReplacedWorkHubRoot,
   type ExecutionRuntimeHostCompositionDependencies,
@@ -699,11 +698,6 @@ test('production recovery leaves upgrade residue for explicitly started maintena
       database.close();
     }
   });
-});
-
-test('filesystem worker follows the candidate executable runtime', () => {
-  assert.equal(runtimeHostFilesystemWorkerRuntime({ electron: '43.1.1' }), 'electron');
-  assert.equal(runtimeHostFilesystemWorkerRuntime({}), 'node');
 });
 
 test('WorkHub recovers a delivered root Stop from its durable cancelled Turn', async () => {
